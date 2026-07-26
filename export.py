@@ -16,6 +16,10 @@ Usage:
     # Export x at multiple resolutions
     python export.py --model yolo26x-depth.pt --imgsz 640 768 960 1280
 
+    # Rect (non-square, HxW) export — matches ultralytics' aspect-preserving
+    # rect inference exactly when W/H equals your camera aspect ratio
+    python export.py --model yolo26n-depth.pt --imgsz 640x480
+
 Requirements:
     pip install ultralytics onnxruntime onnx onnx-simplifier
 """
@@ -29,6 +33,9 @@ import onnx
 import onnxruntime as ort
 from ultralytics import YOLO
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from yolo26depth_rknn.utils import parse_imgsz
+
 
 SUPPORTED_MODELS = {
     "yolo26n-depth.pt": "n",
@@ -41,8 +48,8 @@ SUPPORTED_MODELS = {
 SUPPORTED_IMGSZ = [640, 768, 960, 1280]
 
 
-def export_model(pt_path: str, imgsz: int, output_dir: str = ".", force: bool = False) -> str | None:
-    """Export a single .pt model to ONNX at the given resolution.
+def export_model(pt_path: str, imgsz: tuple[int, int], output_dir: str = ".", force: bool = False) -> str | None:
+    """Export a single .pt model to ONNX at the given (H, W) resolution.
 
     Returns the path to the exported ONNX file, or None if skipped.
     """
@@ -51,9 +58,13 @@ def export_model(pt_path: str, imgsz: int, output_dir: str = ".", force: bool = 
     if pt_name not in SUPPORTED_MODELS:
         print(f"  Warning: {pt_name} not in supported models list, exporting anyway.")
 
-    onnx_name = pt_name.replace(".pt", ".onnx")
-    if imgsz != 640:
-        onnx_name = pt_name.replace(".pt", f"_{imgsz}.onnx")
+    h, w = imgsz
+    if (h, w) == (640, 640):
+        onnx_name = pt_name.replace(".pt", ".onnx")
+    elif h == w:
+        onnx_name = pt_name.replace(".pt", f"_{h}.onnx")
+    else:
+        onnx_name = pt_name.replace(".pt", f"_{h}x{w}.onnx")
 
     output_path = os.path.join(output_dir, onnx_name)
 
@@ -69,13 +80,13 @@ def export_model(pt_path: str, imgsz: int, output_dir: str = ".", force: bool = 
     model = YOLO(pt_path)
 
     print(f"\n{'='*60}")
-    print(f"  {pt_name} → {onnx_name}  (imgsz={imgsz})")
+    print(f"  {pt_name} → {onnx_name}  (imgsz={h}x{w})")
     print(f"{'='*60}")
 
     t0 = time.time()
     model.export(
         format="onnx",
-        imgsz=imgsz,
+        imgsz=[h, w],
         simplify=True,
         opset=19,  # rknn-toolkit2 2.3.2 requires opset <= 19
     )
@@ -119,8 +130,8 @@ def main():
                         help="Path(s) to .pt model file(s)")
     parser.add_argument("--all", action="store_true",
                         help="Export all supported models")
-    parser.add_argument("--imgsz", type=int, nargs="+", default=[640],
-                        help="Input resolution(s). Default: 640")
+    parser.add_argument("--imgsz", type=str, nargs="+", default=["640"],
+                        help="Input resolution(s): 640, 768... or HxW rect like 640x480. Default: 640")
     parser.add_argument("--output", type=str, default=".",
                         help="Output directory. Default: current directory")
     parser.add_argument("--force", action="store_true",
@@ -155,10 +166,13 @@ def main():
     # Export
     count = 0
     for pt_path in model_paths:
-        for imgsz in args.imgsz:
-            if imgsz not in SUPPORTED_IMGSZ:
-                print(f"  Warning: imgsz={imgsz} not in recommended sizes {SUPPORTED_IMGSZ}")
-            if export_model(pt_path, imgsz, args.output, args.force):
+        for spec in args.imgsz:
+            h, w = parse_imgsz(spec)
+            if h == w and h not in SUPPORTED_IMGSZ:
+                print(f"  Warning: imgsz={h} not in recommended sizes {SUPPORTED_IMGSZ}")
+            if h % 32 or w % 32:
+                print(f"  Warning: imgsz={h}x{w} is not a multiple of 32 (network stride)")
+            if export_model(pt_path, (h, w), args.output, args.force):
                 count += 1
 
     print(f"\nDone. Exported {count} model(s).")

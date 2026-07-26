@@ -27,16 +27,18 @@ import onnxruntime as ort
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from yolo26depth_rknn.utils import (
     detect_imgsz_from_onnx,
+    parse_imgsz,
     save_outputs,
 )
 
 
-def prepare_input(image: np.ndarray, imgsz: int) -> np.ndarray:
+def prepare_input(image: np.ndarray, imgsz: tuple[int, int]) -> np.ndarray:
     """Resize and normalize image for ONNX input.
 
     ONNX needs explicit /255 normalization (unlike RKNN which handles it internally).
     """
-    inp = cv2.resize(image, (imgsz, imgsz), interpolation=cv2.INTER_LINEAR)
+    h, w = imgsz
+    inp = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
     inp = cv2.cvtColor(inp, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
     return inp.transpose(2, 0, 1)[np.newaxis]  # NHWC -> NCHW
 
@@ -44,11 +46,11 @@ def prepare_input(image: np.ndarray, imgsz: int) -> np.ndarray:
 class YOLO26DepthONNX:
     """ONNX depth estimation model wrapper."""
 
-    def __init__(self, model_path: str, imgsz: int | None = None):
+    def __init__(self, model_path: str, imgsz: str | int | None = None):
         self.model_path = model_path
-        # Auto-detect imgsz: CLI arg > ONNX metadata > filename > 640
+        # (H, W): CLI arg > ONNX metadata
         if imgsz is not None:
-            self.imgsz = imgsz
+            self.imgsz = parse_imgsz(imgsz)
         else:
             self.imgsz = detect_imgsz_from_onnx(model_path)
         self.sess = ort.InferenceSession(str(model_path), providers=[
@@ -93,8 +95,8 @@ def main():
     parser.add_argument("--benchmark", type=int, default=0,
                         help="Benchmark N iterations (0=off)")
     parser.add_argument("--warmup", type=int, default=3, help="Warmup iterations")
-    parser.add_argument("--imgsz", type=int, default=None,
-                        help="Input size (auto-detected from ONNX metadata)")
+    parser.add_argument("--imgsz", type=str, default=None,
+                        help="Input size, e.g. 640 or 640x480 (auto-detected from ONNX metadata)")
     args = parser.parse_args()
 
     # Load model and image

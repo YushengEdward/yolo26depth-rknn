@@ -36,6 +36,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from yolo26depth_rknn.utils import (
     detect_imgsz_from_path,
+    parse_imgsz,
     save_outputs,
 )
 
@@ -52,8 +53,9 @@ class YOLO26DepthRKNN:
         "012": 7,   # NPU_CORE_0_1_2
     }
 
-    def __init__(self, model_path: str, imgsz: int | None = None, core: str = "auto"):
-        self.imgsz = imgsz or detect_imgsz_from_path(model_path)
+    def __init__(self, model_path: str, imgsz: str | int | None = None, core: str = "auto"):
+        # (H, W): from --imgsz (e.g. "640" or "640x480") or the model filename
+        self.imgsz = parse_imgsz(imgsz) if imgsz else detect_imgsz_from_path(model_path)
         self.rknn = _RKNN()
         ret = self.rknn.load_rknn(model_path)
         if ret != 0:
@@ -72,8 +74,8 @@ class YOLO26DepthRKNN:
         src_h, src_w = image.shape[:2]
 
         # Direct resize (no letterbox)
-        inp = cv2.resize(image, (self.imgsz, self.imgsz),
-                         interpolation=cv2.INTER_LINEAR)
+        h, w = self.imgsz
+        inp = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
         rgb = cv2.cvtColor(inp, cv2.COLOR_BGR2RGB)
         inp_np = np.expand_dims(rgb, 0)  # uint8 NHWC — RKNN handles /255
 
@@ -113,8 +115,8 @@ def main():
     parser.add_argument("--benchmark", type=int, default=0,
                         help="Benchmark N iterations (0=off)")
     parser.add_argument("--warmup", type=int, default=3, help="Warmup iterations")
-    parser.add_argument("--imgsz", type=int, default=None,
-                        help="Input size (auto-detected from model name)")
+    parser.add_argument("--imgsz", type=str, default=None,
+                        help="Input size, e.g. 640 or 640x480 (auto-detected from model name)")
     parser.add_argument("--core", choices=["auto", "0", "1", "2", "012"], default="auto",
                         help="NPU core selection (default: auto)")
     args = parser.parse_args()

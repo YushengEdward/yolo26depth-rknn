@@ -8,24 +8,40 @@ import cv2
 import numpy as np
 
 
-def detect_imgsz_from_path(model_path: str) -> int:
-    """Auto-detect input size from model filename.
+def parse_imgsz(value: str | int) -> tuple[int, int]:
+    """Parse an imgsz spec into (H, W).
 
     Examples:
-        yolo26n-depth-float.rknn       -> 640
-        yolo26n-depth_768-float.rknn   -> 768
-        yolo26x-depth_1280.onnx        -> 1280
+        640       -> (640, 640)
+        "640"     -> (640, 640)
+        "640x480" -> (640, 480)   # H x W, rect model
     """
-    m = re.search(r'_(\d+)-', model_path)
-    return int(m.group(1)) if m else 640
+    s = str(value)
+    if "x" in s:
+        h, w = s.split("x")
+        return int(h), int(w)
+    return int(s), int(s)
 
 
-def detect_imgsz_from_onnx(onnx_path: str) -> int:
-    """Read input size from ONNX model metadata."""
+def detect_imgsz_from_path(model_path: str) -> tuple[int, int]:
+    """Auto-detect input size (H, W) from model filename.
+
+    Examples:
+        yolo26n-depth-float.rknn           -> (640, 640)
+        yolo26n-depth_768-float.rknn       -> (768, 768)
+        yolo26x-depth_1280.onnx            -> (1280, 1280)
+        yolo26n-depth_640x480-float.rknn   -> (640, 480)
+    """
+    m = re.search(r'_(\d+x\d+|\d+)[-.]', model_path)
+    return parse_imgsz(m.group(1)) if m else (640, 640)
+
+
+def detect_imgsz_from_onnx(onnx_path: str) -> tuple[int, int]:
+    """Read input size (H, W) from ONNX model metadata."""
     import onnx
     m = onnx.load(onnx_path)
     shape = m.graph.input[0].type.tensor_type.shape.dim
-    return int(shape[2].dim_value)  # H in N,C,H,W
+    return int(shape[2].dim_value), int(shape[3].dim_value)  # H, W in N,C,H,W
 
 
 def colorize_depth(depth: np.ndarray, mode: str = "disparity") -> np.ndarray:

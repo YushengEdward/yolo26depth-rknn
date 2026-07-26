@@ -61,13 +61,25 @@ python export.py --all --imgsz 640
 python export.py --model yolo26x-depth.pt --imgsz 640 768 960 1280
 ```
 
+### Rect（非正方形，与 ultralytics 原版对齐）
+
+ultralytics 原版单图推理用 **rect 模式**：保持宽高比缩放到 stride-32 对齐尺寸（如 810×1080 → 480×640），不填充也不拉伸。方形模型 + 拉伸 resize 与原版输出差约 12%（宽高比失真）；导出与相机宽高比匹配的 rect 模型即可完全对齐（实测 RKNN vs PT 原版误差 0.44%，且比 640×640 快 12%）：
+
+```bash
+python export.py --model yolo26n-depth.pt --imgsz 640x480   # HxW，4:3 相机
+python convert.py --model yolo26n-depth_640x480.onnx
+python inference_rknn.py --model yolo26n-depth_640x480-float.rknn --image bus.jpg
+```
+
+常用宽高比：4:3 → `640x480`，16:9 → `640x352`（须为 32 的倍数）。推理端（Python/Rust）自动从模型读取输入尺寸，无需额外参数。
+
 ### 参数
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `--model` | `.pt` 模型路径 | 必填（或 `--all`） |
 | `--all` | 导出所有模型 | 否 |
-| `--imgsz` | 输入分辨率，可指定多个 | 640 |
+| `--imgsz` | 输入分辨率，可多个；支持 `HxW` rect（如 `640x480`） | 640 |
 | `--output` | 输出目录 | 当前目录 |
 | `--force` | 强制重新导出 | 否 |
 
@@ -77,6 +89,7 @@ python export.py --model yolo26x-depth.pt --imgsz 640 768 960 1280
 |------|------|
 | `yolo26n-depth.pt` + `--imgsz 640` | `yolo26n-depth.onnx` |
 | `yolo26n-depth.pt` + `--imgsz 768` | `yolo26n-depth_768.onnx` |
+| `yolo26n-depth.pt` + `--imgsz 640x480` | `yolo26n-depth_640x480.onnx` |
 | `yolo26x-depth.pt` + `--imgsz 1280` | `yolo26x-depth_1280.onnx` |
 
 ## RKNN 转换
@@ -288,6 +301,19 @@ RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，war
 | x | 603 ms | 279 ms | 2.2x | 52% |
 
 原因：模型输出端有 `exp()`，log 深度上的微小量化误差会被指数放大；attention 块（逐层分析 cosine 掉到 0.76）也是重灾区。混合量化（敏感层保留 FP16）实测同样无法挽回。rk3588 不支持 w8a16。**建议始终使用 FP16（`-float.rknn`）**，`--quantize` 选项仅供实验。
+
+## 与原版精度对比
+
+bus.jpg，n 模型，以 ultralytics 原版 `YOLO()` 输出为基准：
+
+| 链路 | 平均相对误差 |
+|------|--------------|
+| PT → ONNX（同预处理） | 0.02% |
+| ONNX → RKNN FP16（同预处理） | 0.16% |
+| RKNN 640×640 拉伸 vs 原版 | 11.8% |
+| **RKNN 640×480 rect vs 原版** | **0.44%** |
+
+转换链路本身近乎无损；与原版的差异几乎全部来自预处理宽高比（原版 rect vs 拉伸）。需要和原版逐像素一致时用 rect 导出。
 
 ## 模型管线
 
