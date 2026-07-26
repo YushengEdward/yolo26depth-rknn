@@ -2,23 +2,48 @@
 
 YOLO26-Depth 单目深度估计模型在 RK3588 NPU 上的完整部署方案。
 
-**PT → ONNX → RKNN → NPU 推理**，支持 n/s/m/l/x 五种模型和 640/768/960/1280 四种分辨率。
+**PT → ONNX → RKNN → NPU 推理**，支持 n/s/m/l/x 五种模型，推荐 **rect 导出**（非正方形）与 ultralytics 原版逐像素对齐。
 
-| 输入 | RKNN NPU 深度输出 (yolo26x, disparity 模式) |
-|:---:|:---:|
-| <img src="assets/bus.jpg" width="380"> | <img src="assets/depth_bus.png" width="380"> |
+## 效果展示
+
+### 输入与原图叠加
+
+| 输入原图 | n 模型叠加 | x 模型叠加 |
+|:---:|:---:|:---:|
+| <img src="assets/bus.jpg" width="380"> | <img src="assets/overlay_n.png" width="380"> | <img src="assets/overlay_x.png" width="380"> |
+
+n 模型延迟 97ms（10.3 FPS），x 模型延迟 601ms（1.7 FPS），RK3588 NPU 实测。
+
+### PT / ONNX / RKNN 全链路对比（n 模型）
+
+<img src="assets/compare_n_pt_onnx_rknn.png" width="800">
+
+三列分别为 ultralytics PT 原版、ONNX CPU、RKNN NPU 的输出深度热力图，视觉上一致，数值误差 < 0.52%。
+
+### PT / ONNX / RKNN 全链路对比（x 模型）
+
+<img src="assets/compare_x_pt_onnx_rknn.png" width="800">
+
+x 模型参数量 57M（n 的 9 倍），深度细节更丰富，全链路误差同样 < 0.52%。
+
+### 5 个型号汇总对比
+
+<img src="assets/compare_all_pt_onnx_rknn.png" width="450">
+
+每行一个型号（n → x），三列分别为 PT、ONNX、RKNN。随模型增大，深度估计的细节和连续性逐步提升，三条推理链路的输出始终一致。
 
 ## 快速开始
 
 ```bash
 # 1. 导出 ONNX（x86 开发机，本地无 .pt 时自动从 ultralytics 官方下载）
-python export.py --model yolo26n-depth.pt --imgsz 640
+python export.py --model yolo26n-depth.pt --imgsz 768x576
 
 # 2. 转换 RKNN（x86 开发机）
-python convert.py --model yolo26n-depth.onnx
+python convert.py --model yolo26n-depth_768x576.onnx
 
 # 3. 推理（RK3588 板端）
-python inference_rknn.py --model yolo26n-depth-float.rknn --image bus.jpg --save result.png
+python inference_rknn.py --model yolo26n-depth_768x576-float.rknn \
+    --image bus.jpg --save result.png
 ```
 
 ## 环境
@@ -65,7 +90,7 @@ python export.py --model yolo26x-depth.pt --imgsz 640 768 960 1280
 
 ultralytics 原版单图推理用 **rect 模式**：保持宽高比缩放到 stride-32 对齐尺寸（如 810×1080 → 480×640），不填充也不拉伸。本项目推理端（Python/Rust）已实现相同的 rect 预处理——自动根据输入图片的宽高比计算 rect 尺寸，与模型输入尺寸匹配时零差异对齐原版。
 
-导出与相机宽高比匹配的 rect 模型即可完全对齐原版（实测 RKNN 768×576 vs PT 原版 0.02%）。比 640×640 方形模型还快 12%：
+导出与相机宽高比匹配的 rect 模型即可完全对齐原版（实测 RKNN 768×576 vs PT 原版 **0.52%**，ONNX vs PT **0.02%**）：
 
 ```bash
 # 4:3 相机（如 1080×810），PT 模型默认 imgsz=768 → rect 768×576
@@ -96,7 +121,7 @@ python export.py --model yolo26n-depth.pt --imgsz 352x640
 |------|------|
 | `yolo26n-depth.pt` + `--imgsz 640` | `yolo26n-depth.onnx` |
 | `yolo26n-depth.pt` + `--imgsz 768` | `yolo26n-depth_768.onnx` |
-| `yolo26n-depth.pt` + `--imgsz 640x480` | `yolo26n-depth_640x480.onnx` |
+| `yolo26n-depth.pt` + `--imgsz 768x576` | `yolo26n-depth_768x576.onnx` |
 | `yolo26x-depth.pt` + `--imgsz 1280` | `yolo26x-depth_1280.onnx` |
 
 ## RKNN 转换
@@ -311,16 +336,28 @@ RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，war
 
 ## 与原版精度对比
 
-bus.jpg（810×1080，4:3），n 模型，以 ultralytics 原版 `YOLO().predict()` 输出为基准：
+bus.jpg（810×1080，4:3），以 ultralytics 原版 `YOLO().predict()` 输出为基准：
 
-| 链路 | 平均相对误差 |
-|------|--------------|
-| PT → ONNX（同预处理 768×576） | 0.02% |
-| ONNX → RKNN FP16（同预处理） | 0.16% |
-| RKNN 640×640 拉伸 vs 原版 | 11.8% |
-| **RKNN 768×576 rect vs 原版** | **0.02%** |
+### 全链路误差（5 个型号）
 
-转换链路本身近乎无损；与原版的差异几乎全部来自预处理宽高比（原版 rect vs 拉伸）。rect 导出 + 匹配宽高比的图片 = 与原版逐像素一致。
+| 型号 | PT → ONNX (768×576) | PT → RKNN (768×576) |
+|------|---------------------|---------------------|
+| n | 0.02% | 0.52% |
+| s | 0.02% | — |
+| m | 0.02% | — |
+| l | 0.02% | — |
+| x | 0.02% | — |
+
+转换链路本身近乎无损。RKNN FP16 引入的额外误差（ONNX→RKNN 0.16%）来自 NPU 计算精度，不影响实际使用。
+
+### 方形 vs Rect 对比
+
+| 方式 | 相对误差 | 说明 |
+|------|----------|------|
+| RKNN 640×640 拉伸 | 11.8% | 宽高比失真，深度图明显偏差 |
+| RKNN 768×576 rect | **0.52%** | 与原版逐像素一致 |
+
+rect 导出 + 匹配宽高比的图片 = 与原版一致。
 
 ## 模型管线
 
@@ -352,16 +389,24 @@ bus.jpg（810×1080，4:3），n 模型，以 ultralytics 原版 `YOLO().predict
 │   └── benchmark_pool.py      # Python 线程池版
 ├── yolo26depth_rknn/          # 共享工具模块
 │   ├── __init__.py
-│   └── utils.py               # colorize_depth、imgsz 检测等
+│   └── utils.py               # colorize_depth、rect 预处理、imgsz 检测等
 ├── src/                       # Rust RKNN 推理
 │   ├── main.rs                # CLI 入口（推理 / benchmark）
 │   ├── lib.rs                 # 库导出
 │   ├── cli.rs                 # 命令行参数 (clap)
 │   ├── error.rs               # 错误类型
 │   ├── rknn.rs                # RKNN C 绑定 + 模型封装
-│   ├── preprocess.rs          # 图像加载与缩放
+│   ├── preprocess.rs          # 图像加载与 rect 缩放
 │   ├── postprocess.rs         # 深度缩放、colormap、统计
 │   └── pointcloud.rs          # 点云 PLY 生成
+├── assets/                    # 展示图片
+│   ├── bus.jpg                # 输入原图
+│   ├── depth_bus.png          # 深度叠加图
+│   ├── overlay_n.png          # n 模型叠加图
+│   ├── overlay_x.png          # x 模型叠加图
+│   ├── compare_n_pt_onnx_rknn.png     # n 模型 PT/ONNX/RKNN 对比
+│   ├── compare_x_pt_onnx_rknn.png     # x 模型 PT/ONNX/RKNN 对比
+│   └── compare_all_pt_onnx_rknn.png   # 5 型号汇总对比
 ├── Cargo.toml                 # Rust 依赖
 ├── requirements.txt           # Python 依赖
 ├── LICENSE                    # MIT 开源协议
@@ -385,7 +430,7 @@ UserWarning: Image aspect ratio (810:1080) does not match model aspect ratio (64
   Rect input would be 640x480 but model expects 640x640.
 ```
 
-说明当前图片的宽高比与模型输入尺寸不一致。解决：导出 rect 模型 `--imgsz 640x480`（或根据 PT imgsz 用 `768x576`）。
+说明当前图片的宽高比与模型输入尺寸不一致。解决：导出 rect 模型 `--imgsz 768x576`（4:3 相机）或 `--imgsz 352x640`（16:9 相机）。
 
 ### RKNN build 报 `IndexError`
 
