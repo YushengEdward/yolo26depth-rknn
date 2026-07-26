@@ -4,6 +4,10 @@ YOLO26-Depth 单目深度估计模型在 RK3588 NPU 上的完整部署方案。
 
 **PT → ONNX → RKNN → NPU 推理**，支持 n/s/m/l/x 五种模型和 640/768/960/1280 四种分辨率。
 
+| 输入 | RKNN NPU 深度输出 (yolo26x, disparity 模式) |
+|:---:|:---:|
+| <img src="assets/bus.jpg" width="380"> | <img src="assets/depth_bus.png" width="380"> |
+
 ## 快速开始
 
 ```bash

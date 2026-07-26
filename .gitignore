@@ -21,6 +21,10 @@ target/
 *.ply
 *.npy
 
+# README demo images are kept
+!assets/*.png
+!assets/*.jpg
+
 # IDE
 .vscode/
 .idea/
