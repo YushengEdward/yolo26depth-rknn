@@ -28,19 +28,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from yolo26depth_rknn.utils import (
     detect_imgsz_from_onnx,
     parse_imgsz,
+    prepare_input_rect,
     save_outputs,
 )
-
-
-def prepare_input(image: np.ndarray, imgsz: tuple[int, int]) -> np.ndarray:
-    """Resize and normalize image for ONNX input.
-
-    ONNX needs explicit /255 normalization (unlike RKNN which handles it internally).
-    """
-    h, w = imgsz
-    inp = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
-    inp = cv2.cvtColor(inp, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    return inp.transpose(2, 0, 1)[np.newaxis]  # NHWC -> NCHW
 
 
 class YOLO26DepthONNX:
@@ -61,10 +51,16 @@ class YOLO26DepthONNX:
         print(f"ONNX model: {model_path} (imgsz={self.imgsz}, output={out_shape})")
 
     def predict(self, image: np.ndarray) -> np.ndarray:
-        """Run inference, return (H, W) float32 depth at original image size."""
+        """Run inference, return (H, W) float32 depth at original image size.
+
+        Preprocessing matches ultralytics PT predict: the image is resized with
+        aspect-ratio-preserving rect scaling.  If the image aspect ratio differs
+        from the model's, a warning is emitted.
+        """
         src_h, src_w = image.shape[:2]
 
-        inp = prepare_input(image, self.imgsz)
+        # Rect-aware preprocessing (float32 NCHW, /255 for ONNX)
+        inp = prepare_input_rect(image, self.imgsz, normalize=True)
         out = self.sess.run(None, {self.input_name: inp})[0]
         depth = np.squeeze(out)
 

@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from yolo26depth_rknn.utils import (
     detect_imgsz_from_path,
     parse_imgsz,
+    prepare_input_rect,
     save_outputs,
 )
 
@@ -70,14 +71,16 @@ class YOLO26DepthRKNN:
         print(f"RKNN model: {model_path} (imgsz={self.imgsz}, core={core})")
 
     def predict(self, image: np.ndarray) -> np.ndarray:
-        """Run inference, return (H, W) float32 depth at original image size."""
+        """Run inference, return (H, W) float32 depth at original image size.
+
+        Preprocessing matches ultralytics PT predict: the image is resized with
+        aspect-ratio-preserving rect scaling.  If the image aspect ratio differs
+        from the model's, a warning is emitted.
+        """
         src_h, src_w = image.shape[:2]
 
-        # Direct resize (no letterbox)
-        h, w = self.imgsz
-        inp = cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
-        rgb = cv2.cvtColor(inp, cv2.COLOR_BGR2RGB)
-        inp_np = np.expand_dims(rgb, 0)  # uint8 NHWC — RKNN handles /255
+        # Rect-aware preprocessing (uint8 NHWC for RKNN)
+        inp_np = prepare_input_rect(image, self.imgsz, normalize=False)
 
         outputs = self.rknn.inference(inputs=[inp_np])
         depth = np.squeeze(outputs[0]).astype(np.float32)

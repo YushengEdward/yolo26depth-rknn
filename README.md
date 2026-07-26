@@ -63,15 +63,22 @@ python export.py --model yolo26x-depth.pt --imgsz 640 768 960 1280
 
 ### Rect（非正方形，与 ultralytics 原版对齐）
 
-ultralytics 原版单图推理用 **rect 模式**：保持宽高比缩放到 stride-32 对齐尺寸（如 810×1080 → 480×640），不填充也不拉伸。方形模型 + 拉伸 resize 与原版输出差约 12%（宽高比失真）；导出与相机宽高比匹配的 rect 模型即可完全对齐（实测 RKNN vs PT 原版误差 0.44%，且比 640×640 快 12%）：
+ultralytics 原版单图推理用 **rect 模式**：保持宽高比缩放到 stride-32 对齐尺寸（如 810×1080 → 480×640），不填充也不拉伸。本项目推理端（Python/Rust）已实现相同的 rect 预处理——自动根据输入图片的宽高比计算 rect 尺寸，与模型输入尺寸匹配时零差异对齐原版。
+
+导出与相机宽高比匹配的 rect 模型即可完全对齐原版（实测 RKNN 768×576 vs PT 原版 0.02%）。比 640×640 方形模型还快 12%：
 
 ```bash
-python export.py --model yolo26n-depth.pt --imgsz 640x480   # HxW，4:3 相机
-python convert.py --model yolo26n-depth_640x480.onnx
-python inference_rknn.py --model yolo26n-depth_640x480-float.rknn --image bus.jpg
+# 4:3 相机（如 1080×810），PT 模型默认 imgsz=768 → rect 768×576
+python export.py --model yolo26n-depth.pt --imgsz 768x576
+python convert.py --model yolo26n-depth_768x576.onnx
+
+# 16:9 相机（如 1920×1080），imgsz=640 → rect 352×640
+python export.py --model yolo26n-depth.pt --imgsz 352x640
 ```
 
-常用宽高比：4:3 → `640x480`，16:9 → `640x352`（须为 32 的倍数）。推理端（Python/Rust）自动从模型读取输入尺寸，无需额外参数。
+> **注意**：PT 模型默认 `imgsz=768`。要与原版逐像素一致，rect 导出时 max_dim 也用 768（如 `768x576` 对应 4:3）。用 `640x480` 推理更快但与 768 原版有分辨率差异。
+
+推理端无需额外参数——自动从模型名或 ONNX 元数据读取输入尺寸。若图片宽高比与模型不匹配，会给出警告并回退到拉伸（有精度损失）。
 
 ### 参数
 
@@ -304,28 +311,31 @@ RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，war
 
 ## 与原版精度对比
 
-bus.jpg，n 模型，以 ultralytics 原版 `YOLO()` 输出为基准：
+bus.jpg（810×1080，4:3），n 模型，以 ultralytics 原版 `YOLO().predict()` 输出为基准：
 
 | 链路 | 平均相对误差 |
 |------|--------------|
-| PT → ONNX（同预处理） | 0.02% |
+| PT → ONNX（同预处理 768×576） | 0.02% |
 | ONNX → RKNN FP16（同预处理） | 0.16% |
 | RKNN 640×640 拉伸 vs 原版 | 11.8% |
-| **RKNN 640×480 rect vs 原版** | **0.44%** |
+| **RKNN 768×576 rect vs 原版** | **0.02%** |
 
-转换链路本身近乎无损；与原版的差异几乎全部来自预处理宽高比（原版 rect vs 拉伸）。需要和原版逐像素一致时用 rect 导出。
+转换链路本身近乎无损；与原版的差异几乎全部来自预处理宽高比（原版 rect vs 拉伸）。rect 导出 + 匹配宽高比的图片 = 与原版逐像素一致。
 
 ## 模型管线
 
 ```
 输入 BGR uint8 (任意尺寸)
-  → cv2.resize → imgsz×imgsz
-  → BGR → RGB, uint8 NHWC
-  → RKNN NPU (内部 /255 归一化)
-  → [1,1,imgsz,imgsz] float32 米制深度
+  → rect 预处理：根据图片宽高比计算 stride-32 对齐的输入尺寸
+  → cv2.resize → 模型输入尺寸（保持宽高比，不填充不拉伸）
+  → BGR → RGB, uint8 NHWC (RKNN) / float32 NCHW (ONNX)
+  → NPU / CPU 推理
+  → [1,1,H,W] float32 米制深度
   → cv2.resize → 原图尺寸
   → 热力图 / 点云
 ```
+
+如果图片宽高比与模型不匹配（如方形模型处理 4:3 图片），会给出警告并回退到拉伸 resize。
 
 模型内部已烘焙 `exp(clamp(log_depth))` 和 4x 上采样，NPU 输出即为正的米制深度值。
 
@@ -364,9 +374,18 @@ bus.jpg，n 模型，以 ultralytics 原版 `YOLO()` 输出为基准：
 
 ONNX 推理忘记 `/255.0` 归一化。RKNN 不需要（内部处理）。
 
-### 边缘有条带
+### 边缘有条带 / 深度异常区域
 
-使用了 letterbox padding。本项目使用直接 `cv2.resize()`，无此问题。
+可能是图片宽高比与模型不匹配导致的拉伸。使用 rect 导出（`--imgsz HxW`）匹配相机宽高比即可消除。推理时若不匹配会给出警告。
+
+### 宽高比不匹配警告
+
+```
+UserWarning: Image aspect ratio (810:1080) does not match model aspect ratio (640:640).
+  Rect input would be 640x480 but model expects 640x640.
+```
+
+说明当前图片的宽高比与模型输入尺寸不一致。解决：导出 rect 模型 `--imgsz 640x480`（或根据 PT imgsz 用 `768x576`）。
 
 ### RKNN build 报 `IndexError`
 

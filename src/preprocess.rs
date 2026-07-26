@@ -1,4 +1,9 @@
-//! Image preprocessing: load, resize to model input size.
+//! Image preprocessing: load, resize to model input size with rect (aspect-ratio-preserving) mode.
+//!
+//! Matches ultralytics PT predict: the image is scaled so the longer side equals
+//! the model's max dimension while keeping the aspect ratio, then rounded to the
+//! nearest stride-32 multiple.  If the computed rect size matches the model input,
+//! the resize is direct.  Otherwise a warning is logged and the image is stretched.
 //!
 //! Uses plain bilinear sampling (matching OpenCV `INTER_LINEAR`) rather than
 //! `image::imageops::resize`, whose Triangle filter applies anti-aliasing on
@@ -7,6 +12,20 @@
 use image::GenericImageView;
 
 use crate::error::Result;
+
+const STRIDE: f64 = 32.0;
+
+/// Compute rect input size matching ultralytics behavior.
+///
+/// `src_w`/`src_h` are the source image dimensions; `model_max_dim` is the
+/// larger of the model's input H/W (for square models this is just imgsz).
+/// Returns `(rect_h, rect_w)` stride-32 aligned.
+fn compute_rect_input(src_h: u32, src_w: u32, model_max_dim: u32) -> (u32, u32) {
+    let scale = model_max_dim as f64 / src_h.max(src_w) as f64;
+    let new_h = (src_h as f64 * scale / STRIDE).round() as u32 * 32;
+    let new_w = (src_w as f64 * scale / STRIDE).round() as u32 * 32;
+    (new_h.max(32), new_w.max(32))
+}
 
 /// Plain bilinear resize of an RGB8 buffer — bit-compatible with
 /// `cv2.resize(..., interpolation=cv2.INTER_LINEAR)`.
@@ -51,18 +70,34 @@ fn resize_bilinear_rgb(
     dst
 }
 
-/// Load an image and resize it to the model's input dimensions.
+/// Load an image and resize it to the model's input dimensions with rect preprocessing.
 ///
 /// Returns a flat RGB buffer (NHWC layout) suitable for RKNN input.
 pub fn preprocess(img_path: &str, target_w: usize, target_h: usize) -> Result<Vec<u8>> {
     let img = image::open(img_path)?;
     let (orig_w, orig_h) = img.dimensions();
+
+    // Compute rect input size from image aspect ratio
+    let model_max_dim = target_h.max(target_w) as u32;
+    let (rect_h, rect_w) = compute_rect_input(orig_h, orig_w, model_max_dim);
+
+    let (rw, rh): (usize, usize) = if rect_h == target_h as u32 && rect_w == target_w as u32 {
+        (target_w, target_h)
+    } else {
+        log::warn!(
+            "Image aspect ratio ({}:{}) does not match model aspect ratio ({}:{}). \
+             Rect input would be {}x{} but model expects {}x{}. \
+             Results will differ from ultralytics PT predict. \
+             Export a rect model with --imgsz {}x{} for best accuracy.",
+            orig_w, orig_h, target_w, target_h, rect_w, rect_h, target_w, target_h, rect_w, rect_h
+        );
+        // Fallback: stretch to model size
+        (target_w, target_h)
+    };
+
     log::info!(
         "Preprocess: {}x{} -> {}x{} (bilinear)",
-        orig_w,
-        orig_h,
-        target_w,
-        target_h
+        orig_w, orig_h, rw, rh
     );
 
     let rgb = img.to_rgb8();
@@ -70,8 +105,8 @@ pub fn preprocess(img_path: &str, target_w: usize, target_h: usize) -> Result<Ve
         rgb.as_raw(),
         orig_w as usize,
         orig_h as usize,
-        target_w,
-        target_h,
+        rw,
+        rh,
     ))
 }
 

@@ -22,7 +22,12 @@ import time
 import cv2
 import numpy as np
 import onnx
+import os
+import sys
 from rknn.api import RKNN
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from yolo26depth_rknn.utils import prepare_input_rect, detect_imgsz_from_onnx
 
 
 TARGET_PLATFORM = "rk3588"
@@ -98,10 +103,9 @@ def convert_onnx_to_rknn(
     if test_image and os.path.exists(test_image):
         rknn.init_runtime()
         img = cv2.imread(test_image)
-        h, w = detect_input_size(onnx_path)
-        inp = cv2.resize(img, (w, h))
-        rgb = cv2.cvtColor(inp, cv2.COLOR_BGR2RGB)
-        outputs = rknn.inference(inputs=[np.expand_dims(rgb, 0)])
+        imgsz = detect_imgsz_from_onnx(onnx_path)
+        inp_np = prepare_input_rect(img, imgsz, normalize=False)
+        outputs = rknn.inference(inputs=[inp_np])
         depth = np.squeeze(outputs[0]).astype(np.float32)
         valid = depth[depth > 0]
         print(f"  Verify: shape={depth.shape}, median={np.median(valid):.2f} m")
