@@ -248,7 +248,26 @@ RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，war
    | n | 10.6 FPS | 27.6 FPS | 2.6x |
    | x | 1.7 FPS | 4.4 FPS | 2.7x |
 
-   完整示例见 `examples/benchmark_pool.py`（线程池异步推理，每线程一个实例绑独立核）：
+   **Rust 队列版**（`examples/benchmark_pool.rs`）：帧队列 + N 个 worker 线程，每 worker 独立 RKNN 实例轮询绑核；输入只解码/预处理一次，帧为 buffer clone，测的是纯推理吞吐。n 模型 6 worker（每核 2 实例）可将 NPU 喂满至 **33.3 FPS**：
+
+   | 模型 | workers | 吞吐 | 单帧延迟 (median) |
+   |------|---------|------|-------------------|
+   | n | 1 | 10.3 FPS | 96 ms |
+   | n | 3 | 28.6 FPS | 102 ms |
+   | n | 6 | **33.3 FPS** | 172 ms |
+   | n | 9 | 31.3 FPS | 257 ms |
+   | x | 3 | **4.2 FPS** | 679 ms |
+   | x | 6 | 4.0 FPS | 1334 ms |
+
+   小模型每核 2 实例可掩盖调度间隙（+17%）；大模型 NPU 已饱和，3 worker 即最优，加 worker 只涨延迟。
+
+   ```bash
+   cargo build --release --example benchmark_pool
+   ./target/release/examples/benchmark_pool \
+       --model yolo26n-depth-float.rknn --image bus.jpg --frames 180 --workers 6
+   ```
+
+   Python 线程池版见 `examples/benchmark_pool.py`：
    ```bash
    # 3 核聚合吞吐
    python3 examples/benchmark_pool.py --model yolo26n-depth-float.rknn \
@@ -293,7 +312,8 @@ RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，war
 ├── inference_onnx.py          # Python ONNX 推理 (CPU)
 ├── depth_to_pointcloud.py     # 深度图 → 点云 PLY
 ├── examples/
-│   └── benchmark_pool.py      # 线程池多核异步推理 benchmark
+│   ├── benchmark_pool.rs      # Rust 帧队列多核吞吐 benchmark
+│   └── benchmark_pool.py      # Python 线程池版
 ├── yolo26depth_rknn/          # 共享工具模块
 │   ├── __init__.py
 │   └── utils.py               # colorize_depth、imgsz 检测等
