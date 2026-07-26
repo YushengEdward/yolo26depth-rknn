@@ -20,7 +20,7 @@ fn run(args: &Args) -> Result<()> {
 
     // Load model
     log::info!("Loading: {}", args.model);
-    let model = DepthModel::load(&args.model)?;
+    let model = DepthModel::load(&args.model, args.core)?;
 
     // Preprocess
     let rgb_data = preprocess(&args.image, model.input_w, model.input_h)?;

@@ -79,6 +79,7 @@ extern "C" {
         extend: *const c_void,
     ) -> c_int;
     fn rknn_destroy(context: rknn_context) -> c_int;
+    fn rknn_set_core_mask(context: rknn_context, core_mask: c_uint) -> c_int;
     fn rknn_query(
         context: rknn_context,
         cmd: c_uint,
@@ -146,9 +147,36 @@ pub struct DepthModel {
     pub output_w: usize,
 }
 
+/// NPU core selection for RK3588 (3 cores).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum NpuCore {
+    /// Let the runtime pick an idle core
+    Auto,
+    /// Pin to core 0
+    Core0,
+    /// Pin to core 1
+    Core1,
+    /// Pin to core 2
+    Core2,
+    /// Distribute across all three cores
+    Core012,
+}
+
+impl NpuCore {
+    fn mask(self) -> c_uint {
+        match self {
+            NpuCore::Auto => 0,
+            NpuCore::Core0 => 1,
+            NpuCore::Core1 => 2,
+            NpuCore::Core2 => 4,
+            NpuCore::Core012 => 7,
+        }
+    }
+}
+
 impl DepthModel {
     /// Load an RKNN model and query its I/O tensor shapes.
-    pub fn load(model_path: &str) -> Result<Self> {
+    pub fn load(model_path: &str, core: NpuCore) -> Result<Self> {
         let c_path = CString::new(model_path).map_err(|e| Error::Invalid(e.to_string()))?;
 
         let mut ctx: rknn_context = 0;
@@ -164,6 +192,14 @@ impl DepthModel {
             },
             "rknn_init",
         )?;
+
+        if core != NpuCore::Auto {
+            check(
+                unsafe { rknn_set_core_mask(ctx, core.mask()) },
+                "rknn_set_core_mask",
+            )?;
+            info!("NPU core: {:?}", core);
+        }
 
         // Query I/O count
         let mut io_num: rknn_input_output_num = unsafe { std::mem::zeroed() };

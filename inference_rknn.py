@@ -43,16 +43,29 @@ from yolo26depth_rknn.utils import (
 class YOLO26DepthRKNN:
     """RKNN depth estimation model wrapper."""
 
-    def __init__(self, model_path: str, imgsz: int | None = None):
+    # Maps --core choice to RKNNLite core mask (RK3588 has 3 NPU cores)
+    CORE_MASKS = {
+        "auto": 0,  # NPU_CORE_AUTO
+        "0": 1,     # NPU_CORE_0
+        "1": 2,     # NPU_CORE_1
+        "2": 4,     # NPU_CORE_2
+        "012": 7,   # NPU_CORE_0_1_2
+    }
+
+    def __init__(self, model_path: str, imgsz: int | None = None, core: str = "auto"):
         self.imgsz = imgsz or detect_imgsz_from_path(model_path)
         self.rknn = _RKNN()
         ret = self.rknn.load_rknn(model_path)
         if ret != 0:
             raise RuntimeError(f"Failed to load RKNN model: {model_path}")
-        ret = self.rknn.init_runtime()
+        try:
+            ret = self.rknn.init_runtime(core_mask=self.CORE_MASKS[core])
+        except TypeError:
+            # rknn-toolkit2 simulator has no core_mask parameter
+            ret = self.rknn.init_runtime()
         if ret != 0:
             raise RuntimeError("Failed to init RKNN runtime")
-        print(f"RKNN model: {model_path} (imgsz={self.imgsz})")
+        print(f"RKNN model: {model_path} (imgsz={self.imgsz}, core={core})")
 
     def predict(self, image: np.ndarray) -> np.ndarray:
         """Run inference, return (H, W) float32 depth at original image size."""
@@ -102,10 +115,12 @@ def main():
     parser.add_argument("--warmup", type=int, default=3, help="Warmup iterations")
     parser.add_argument("--imgsz", type=int, default=None,
                         help="Input size (auto-detected from model name)")
+    parser.add_argument("--core", choices=["auto", "0", "1", "2", "012"], default="auto",
+                        help="NPU core selection (default: auto)")
     args = parser.parse_args()
 
     # Load model and image
-    model = YOLO26DepthRKNN(args.model, imgsz=args.imgsz)
+    model = YOLO26DepthRKNN(args.model, imgsz=args.imgsz, core=args.core)
     image = cv2.imread(args.image)
     if image is None:
         raise FileNotFoundError(f"Image not found: {args.image}")

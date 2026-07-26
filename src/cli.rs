@@ -46,4 +46,8 @@ pub struct Args {
     /// Point cloud downsample factor (1=full, 2=half, 4=quarter)
     #[arg(long, default_value = "2")]
     pub pc_downsample: usize,
+
+    /// NPU core selection (RK3588 has 3 cores)
+    #[arg(long, value_enum, default_value_t = crate::rknn::NpuCore::Auto)]
+    pub core: crate::rknn::NpuCore,
 }

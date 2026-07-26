@@ -212,24 +212,36 @@ python depth_to_pointcloud.py --depth depth.npy --image bus.jpg \
 
 ## 性能
 
-RK3588 实测（bus.jpg，FLOAT16，warmup 3 + 平均 10~20 次）：
+RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，warmup 3 + 平均 15~20 次）：
 
 | 模型 | 分辨率 | RKNN NPU | FPS |
 |------|--------|----------|-----|
-| n | 640 | 224 ms | 4.5 |
-| s | 640 | 246 ms | 4.1 |
-| m | 640 | 349 ms | 2.9 |
-| l | 640 | 402 ms | 2.5 |
-| x | 640 | 702 ms | 1.4 |
-| n | 768 | 215 ms | 4.7 |
-| s | 768 | 302 ms | 3.3 |
-| x | 768 | 1079 ms | 0.9 |
-| x | 960 | 1722 ms | 0.6 |
-| x | 1280 | 3030 ms | 0.3 |
+| n | 640 | 94 ms | 10.6 |
+| s | 640 | 128 ms | 7.8 |
+| m | 640 | 238 ms | 4.2 |
+| l | 640 | 285 ms | 3.5 |
+| x | 640 | 603 ms | 1.7 |
 
-对比 ONNX CPU（RK3588 A76）：x/640 为 2748 ms，NPU 加速约 3.7x。
+对比 ONNX CPU（RK3588 A76）：x/640 为 2748 ms，NPU 加速约 4.6x。
 
-> 注：板端 librknnrt 为 1.6.0 时会提示与模型 toolkit 2.3.2 版本不匹配（仅警告，可正常运行）。升级 `/usr/lib/librknnrt.so` 至 2.3.x 可能进一步提速。
+### 性能调优（重要）
+
+默认板卡配置下 n 模型约 224 ms，两步优化后降至 94 ms（**2.4 倍**）：
+
+1. **升级板端 runtime**（收益最大）。旧版 librknnrt（如 1.6.0）跑 toolkit 2.3.2 编译的模型只有一半速度。从 [rknpu2 仓库](https://github.com/airockchip/rknn-toolkit2/tree/master/rknpu2/runtime/Linux/librknn_api/aarch64) 取与 toolkit 匹配的版本：
+   ```bash
+   sudo cp librknnrt.so /usr/lib/librknnrt.so
+   ```
+
+2. **锁定 NPU/CPU 频率**。默认 ondemand governor 空闲降频，单次推理经常跑不满：
+   ```bash
+   echo performance | sudo tee /sys/class/devfreq/fdab0000.npu/governor
+   for p in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do
+       echo performance | sudo tee $p; done
+   ```
+   （重启后失效，需开机脚本固化）
+
+3. **NPU 多核**：`--core` 参数（Python: `auto/0/1/2/012`，Rust: `auto/core0/core1/core2/core012`）。单帧推理多核收益很小（约 3%），主要用于多线程并发时把不同实例固定到不同核提升吞吐。
 
 ## 模型管线
 
