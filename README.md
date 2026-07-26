@@ -245,14 +245,18 @@ RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，war
 
    | 模型 | 单实例 | 3 实例 × 3 核聚合 | 提升 |
    |------|--------|-------------------|------|
-   | n | 10.6 FPS | 27.2 FPS | 2.6x |
+   | n | 10.6 FPS | 27.6 FPS | 2.6x |
    | x | 1.7 FPS | 4.4 FPS | 2.7x |
 
+   完整示例见 `examples/benchmark_pool.py`（线程池异步推理，每线程一个实例绑独立核）：
    ```bash
-   for c in 0 1 2; do
-       python3 inference_rknn.py --model yolo26n-depth-float.rknn \
-           --image bus.jpg --benchmark 30 --core $c &
-   done; wait
+   # 3 核聚合吞吐
+   python3 examples/benchmark_pool.py --model yolo26n-depth-float.rknn \
+       --image bus.jpg --frames 90
+
+   # 单核基线对比
+   python3 examples/benchmark_pool.py --model yolo26n-depth-float.rknn \
+       --image bus.jpg --frames 30 --cores 0
    ```
 
 ### 关于 INT8 量化（不推荐）
@@ -288,6 +292,8 @@ RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，war
 ├── inference_rknn.py          # Python RKNN 推理
 ├── inference_onnx.py          # Python ONNX 推理 (CPU)
 ├── depth_to_pointcloud.py     # 深度图 → 点云 PLY
+├── examples/
+│   └── benchmark_pool.py      # 线程池多核异步推理 benchmark
 ├── yolo26depth_rknn/          # 共享工具模块
 │   ├── __init__.py
 │   └── utils.py               # colorize_depth、imgsz 检测等
