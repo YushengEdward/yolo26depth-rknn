@@ -241,7 +241,30 @@ RK3588 实测（bus.jpg，FLOAT16，librknnrt 2.3.2 + performance governor，war
    ```
    （重启后失效，需开机脚本固化）
 
-3. **NPU 多核**：`--core` 参数（Python: `auto/0/1/2/012`，Rust: `auto/core0/core1/core2/core012`）。单帧推理多核收益很小（约 3%），主要用于多线程并发时把不同实例固定到不同核提升吞吐。
+3. **NPU 多核**：`--core` 参数（Python: `auto/0/1/2/012`，Rust: `auto/core0/core1/core2/core012`）。单帧推理多核收益很小（约 3%）；真正的用法是**多进程/多线程各绑一个核**，吞吐接近 3 倍（实测 t6）：
+
+   | 模型 | 单实例 | 3 实例 × 3 核聚合 | 提升 |
+   |------|--------|-------------------|------|
+   | n | 10.6 FPS | 27.2 FPS | 2.6x |
+   | x | 1.7 FPS | 4.4 FPS | 2.7x |
+
+   ```bash
+   for c in 0 1 2; do
+       python3 inference_rknn.py --model yolo26n-depth-float.rknn \
+           --image bus.jpg --benchmark 30 --core $c &
+   done; wait
+   ```
+
+### 关于 INT8 量化（不推荐）
+
+实测 INT8（w8a8，32 张 COCO 图校准）速度收益明显但**深度精度损失过大**：
+
+| 模型 | FP16 | INT8 | 提速 | INT8 平均相对误差 |
+|------|------|------|------|-------------------|
+| n | 94 ms | 77 ms | 1.2x | 33% |
+| x | 603 ms | 279 ms | 2.2x | 52% |
+
+原因：模型输出端有 `exp()`，log 深度上的微小量化误差会被指数放大；attention 块（逐层分析 cosine 掉到 0.76）也是重灾区。混合量化（敏感层保留 FP16）实测同样无法挽回。rk3588 不支持 w8a16。**建议始终使用 FP16（`-float.rknn`）**，`--quantize` 选项仅供实验。
 
 ## 模型管线
 

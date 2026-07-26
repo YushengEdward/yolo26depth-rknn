@@ -121,7 +121,7 @@ def main():
     parser.add_argument("--model", type=str, nargs="+", required=True,
                         help="Path(s) to .onnx model file(s)")
     parser.add_argument("--quantize", action="store_true",
-                        help="Enable INT8 quantization")
+                        help="Enable INT8 quantization (see README: accuracy loss is large for this model)")
     parser.add_argument("--dataset", type=str, default=DATASET,
                         help="Dataset file for quantization (default: datasets.txt)")
     parser.add_argument("--test-image", type=str, default=None,
