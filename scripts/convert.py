@@ -3,13 +3,13 @@
 
 Usage:
     # Convert a single model
-    python convert.py --model yolo26n-depth.onnx
+    python scripts/convert.py --model models/yolo26n-depth.onnx
 
     # Convert multiple models
-    python convert.py --model yolo26n-depth.onnx yolo26s-depth.onnx yolo26x-depth.onnx
+    python scripts/convert.py --model models/yolo26n-depth.onnx yolo26s-depth.onnx yolo26x-depth.onnx
 
     # With INT8 quantization
-    python convert.py --model yolo26n-depth.onnx --quantize --dataset datasets.txt
+    python scripts/convert.py --model models/yolo26n-depth.onnx --quantize --dataset datasets.txt
 
 Requirements:
     pip install rknn-toolkit2 opencv-python numpy onnx
@@ -22,11 +22,10 @@ import time
 import cv2
 import numpy as np
 import onnx
-import os
 import sys
 from rknn.api import RKNN
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from yolo26depth_rknn.utils import prepare_input_rect, detect_imgsz_from_onnx
 
 

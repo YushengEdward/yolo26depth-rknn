@@ -1,74 +1,54 @@
 #!/usr/bin/env python3
-"""YOLO26 Depth inference using RKNN on RK3588 NPU.
+"""YOLO26 Depth inference using ONNX Runtime (CPU).
 
 Usage:
-    # Single inference with overlay
-    python inference_rknn.py --model yolo26n-depth-float.rknn --image bus.jpg --save result.png
+    # Single inference
+    python scripts/inference_onnx.py --model models/yolo26n-depth.onnx --image bus.jpg --save result.png
 
-    # Benchmark (100 iterations)
-    python inference_rknn.py --model yolo26n-depth-float.rknn --image bus.jpg --benchmark
+    # Benchmark
+    python scripts/inference_onnx.py --model models/yolo26n-depth.onnx --image bus.jpg --benchmark 100
 
-    # Save heatmap + raw depth
-    python inference_rknn.py --model yolo26n-depth_768-float.rknn --image bus.jpg \
-        --save-heat heatmap.png --save-depth depth.npy
+    # Auto-detect input size from ONNX metadata
+    python scripts/inference_onnx.py --model models/yolo26n-depth_768.onnx --image bus.jpg
 
-Requires: rknn-toolkit-lite2 on RK3588 (or rknn-toolkit2 on x86)
+Requires: pip install onnxruntime opencv-python numpy onnx
 """
 from __future__ import annotations
 import argparse
-import importlib.util
+import os
+import sys
 import time
 
 import cv2
 import numpy as np
-
-# Try on-device runtime first, fall back to simulator
-if importlib.util.find_spec("rknnlite"):
-    from rknnlite.api import RKNNLite  # noqa
-    _RKNN = RKNNLite
-else:
-    from rknn.api import RKNN  # noqa
-    _RKNN = RKNN
+import onnxruntime as ort
 
 # Import shared utils (works both as repo module and standalone script)
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from yolo26depth_rknn.utils import (
-    detect_imgsz_from_path,
+    detect_imgsz_from_onnx,
     parse_imgsz,
     prepare_input_rect,
     save_outputs,
 )
 
 
-class YOLO26DepthRKNN:
-    """RKNN depth estimation model wrapper."""
+class YOLO26DepthONNX:
+    """ONNX depth estimation model wrapper."""
 
-    # Maps --core choice to RKNNLite core mask (RK3588 has 3 NPU cores)
-    CORE_MASKS = {
-        "auto": 0,  # NPU_CORE_AUTO
-        "0": 1,     # NPU_CORE_0
-        "1": 2,     # NPU_CORE_1
-        "2": 4,     # NPU_CORE_2
-        "012": 7,   # NPU_CORE_0_1_2
-    }
-
-    def __init__(self, model_path: str, imgsz: str | int | None = None, core: str = "auto"):
-        # (H, W): from --imgsz (e.g. "640" or "640x480") or the model filename
-        self.imgsz = parse_imgsz(imgsz) if imgsz else detect_imgsz_from_path(model_path)
-        self.rknn = _RKNN()
-        ret = self.rknn.load_rknn(model_path)
-        if ret != 0:
-            raise RuntimeError(f"Failed to load RKNN model: {model_path}")
-        try:
-            ret = self.rknn.init_runtime(core_mask=self.CORE_MASKS[core])
-        except TypeError:
-            # rknn-toolkit2 simulator has no core_mask parameter
-            ret = self.rknn.init_runtime()
-        if ret != 0:
-            raise RuntimeError("Failed to init RKNN runtime")
-        print(f"RKNN model: {model_path} (imgsz={self.imgsz}, core={core})")
+    def __init__(self, model_path: str, imgsz: str | int | None = None):
+        self.model_path = model_path
+        # (H, W): CLI arg > ONNX metadata
+        if imgsz is not None:
+            self.imgsz = parse_imgsz(imgsz)
+        else:
+            self.imgsz = detect_imgsz_from_onnx(model_path)
+        self.sess = ort.InferenceSession(str(model_path), providers=[
+            "CPUExecutionProvider"
+        ])
+        self.input_name = self.sess.get_inputs()[0].name
+        out_shape = self.sess.get_outputs()[0].shape
+        print(f"ONNX model: {model_path} (imgsz={self.imgsz}, output={out_shape})")
 
     def predict(self, image: np.ndarray) -> np.ndarray:
         """Run inference, return (H, W) float32 depth at original image size.
@@ -79,21 +59,14 @@ class YOLO26DepthRKNN:
         """
         src_h, src_w = image.shape[:2]
 
-        # Rect-aware preprocessing (uint8 NHWC for RKNN)
-        inp_np = prepare_input_rect(image, self.imgsz, normalize=False)
-
-        outputs = self.rknn.inference(inputs=[inp_np])
-        depth = np.squeeze(outputs[0]).astype(np.float32)
+        # Rect-aware preprocessing (float32 NCHW, /255 for ONNX)
+        inp = prepare_input_rect(image, self.imgsz, normalize=True)
+        out = self.sess.run(None, {self.input_name: inp})[0]
+        depth = np.squeeze(out)
 
         # Resize depth back to original image size
         depth = cv2.resize(depth, (src_w, src_h), interpolation=cv2.INTER_LINEAR)
         return depth
-
-    def __del__(self):
-        try:
-            self.rknn.release()
-        except Exception:
-            pass
 
 
 def print_depth_stats(depth: np.ndarray):
@@ -107,8 +80,8 @@ def print_depth_stats(depth: np.ndarray):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="YOLO26-Depth RKNN Inference")
-    parser.add_argument("--model", required=True, help="Path to .rknn model")
+    parser = argparse.ArgumentParser(description="YOLO26-Depth ONNX Inference")
+    parser.add_argument("--model", required=True, help="Path to .onnx model")
     parser.add_argument("--image", required=True, help="Input image")
     parser.add_argument("--save", default=None, help="Save overlay (image + heatmap blend)")
     parser.add_argument("--save-heat", default=None, help="Save standalone heatmap")
@@ -119,13 +92,11 @@ def main():
                         help="Benchmark N iterations (0=off)")
     parser.add_argument("--warmup", type=int, default=3, help="Warmup iterations")
     parser.add_argument("--imgsz", type=str, default=None,
-                        help="Input size, e.g. 640 or 640x480 (auto-detected from model name)")
-    parser.add_argument("--core", choices=["auto", "0", "1", "2", "012"], default="auto",
-                        help="NPU core selection (default: auto)")
+                        help="Input size, e.g. 640 or 640x480 (auto-detected from ONNX metadata)")
     args = parser.parse_args()
 
     # Load model and image
-    model = YOLO26DepthRKNN(args.model, imgsz=args.imgsz, core=args.core)
+    model = YOLO26DepthONNX(args.model, imgsz=args.imgsz)
     image = cv2.imread(args.image)
     if image is None:
         raise FileNotFoundError(f"Image not found: {args.image}")

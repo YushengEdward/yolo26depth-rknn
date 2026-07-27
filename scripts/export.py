@@ -5,20 +5,20 @@ Supports all model sizes (n/s/m/l/x) and input resolutions (640/768/960/1280).
 
 Usage:
     # Export a single model
-    python export.py --model yolo26n-depth.pt --imgsz 640
+    python scripts/export.py --model models/yolo26n-depth.pt --imgsz 640
 
     # Export multiple models
-    python export.py --model yolo26n-depth.pt yolo26s-depth.pt --imgsz 640
+    python scripts/export.py --model models/yolo26n-depth.pt yolo26s-depth.pt --imgsz 640
 
     # Export all models at 640
-    python export.py --all --imgsz 640
+    python scripts/export.py --all --imgsz 640
 
     # Export x at multiple resolutions
-    python export.py --model yolo26x-depth.pt --imgsz 640 768 960 1280
+    python scripts/export.py --model models/yolo26x-depth.pt --imgsz 640 768 960 1280
 
     # Rect (non-square, HxW) export — matches ultralytics' aspect-preserving
     # rect inference exactly when W/H equals your camera aspect ratio
-    python export.py --model yolo26n-depth.pt --imgsz 640x480
+    python scripts/export.py --model models/yolo26n-depth.pt --imgsz 640x480
 
 Requirements:
     pip install ultralytics onnxruntime onnx onnx-simplifier
@@ -33,7 +33,7 @@ import onnx
 import onnxruntime as ort
 from ultralytics import YOLO
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from yolo26depth_rknn.utils import parse_imgsz
 
 

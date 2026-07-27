@@ -4,8 +4,8 @@
 Supports reading depth from .npy files or raw binary float32.
 
 Usage:
-    python depth_to_pointcloud.py --depth depth.npy --image bus.jpg --output pointcloud.ply
-    python depth_to_pointcloud.py --depth depth.npy --image bus.jpg --output pointcloud.ply --downsample 4
+    python scripts/depth_to_pointcloud.py --depth depth.npy --image bus.jpg --output pointcloud.ply
+    python scripts/depth_to_pointcloud.py --depth depth.npy --image bus.jpg --output pointcloud.ply --downsample 4
 """
 from __future__ import annotations
 import argparse

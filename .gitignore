@@ -7,9 +7,6 @@ build/
 .venv/
 venv/
 
-# Rust
-target/
-
 # Models (large binary files - generate with export.py / convert.py)
 *.pt
 *.onnx

@@ -1,6 +1,6 @@
 # YOLO26-Depth RKNN
 
-YOLO26-Depth 单目深度估计模型在 RK3588 NPU 上的完整部署方案。
+YOLO26-Depth 单目深度估计模型在 RK3588 NPU 上的完整部署方案（野火鲁班猫 5，RK3588，16+256GB）。
 
 **PT → ONNX → RKNN → NPU 推理**，支持 n/s/m/l/x 五种模型，推荐 **rect 导出**（非正方形）与 ultralytics 原版逐像素对齐。
 
@@ -45,6 +45,36 @@ python convert.py --model yolo26n-depth_768x576.onnx
 python inference_rknn.py --model yolo26n-depth_768x576-float.rknn \
     --image bus.jpg --save result.png
 ```
+
+## 性能测试
+
+RK3588 NPU 实测，输入 bus.jpg (640)，NPU 内上采样。
+
+### n 模型 (640x640)
+
+| Workers | Python FPS | Python 延迟 | C++ FPS | C++ 延迟 |
+|---------|-----------|------------|---------|---------|
+| 1 | 9.1 | 109.8 ms | 10.4 | 96.6 ms |
+| 3 | 26.0 | 112.9 ms | 27.2 | 107.7 ms |
+| 6 | 31.0 | 188.7 ms | 30.8 | 185.3 ms |
+
+### s 模型 (640x640)
+
+| Workers | Python FPS | Python 延迟 | C++ FPS | C++ 延迟 |
+|---------|-----------|------------|---------|---------|
+| 1 | 7.6 | 131.4 ms | 7.7 | 129.6 ms |
+| 3 | 18.8 | 154.8 ms | 19.7 | 148.6 ms |
+| 6 | 21.4 | 279.1 ms | 21.0 | 269.3 ms |
+
+### Python vs C++ 加速比 (n 模型)
+
+| Workers | Python | C++ | 加速比 |
+|---------|--------|-----|-------|
+| 1 | 109.8 ms | 96.6 ms | 1.14x |
+| 3 | 112.9 ms | 107.7 ms | 1.05x |
+| 6 | 188.7 ms | 185.3 ms | 1.02x |
+
+C++ 在单核推理时比 Python 快 5-15%。多核吞吐量接近，因为瓶颈在 NPU 计算本身。
 
 ## 环境
 

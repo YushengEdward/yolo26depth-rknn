@@ -6,11 +6,11 @@ own RKNN instance pinned to a dedicated core, and frames are dispatched to
 the pool asynchronously — simulating a video pipeline.
 
 Usage (on RK3588):
-    python examples/benchmark_pool.py --model yolo26n-depth-float.rknn \
+    python examples/benchmark_pool.py --model models/yolo26n-depth-float.rknn \
         --image bus.jpg --frames 90
 
     # Single core baseline for comparison
-    python examples/benchmark_pool.py --model yolo26n-depth-float.rknn \
+    python examples/benchmark_pool.py --model models/yolo26n-depth-float.rknn \
         --image bus.jpg --frames 30 --cores 0
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'scripts'))
 from inference_rknn import YOLO26DepthRKNN  # noqa: E402
 
 _tls = threading.local()
